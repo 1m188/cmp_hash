@@ -1,0 +1,7 @@
+# Binaries
+cmp_hash
+*.exe
+
+# IDE
+.idea/
+.vscode/
