@@ -401,8 +401,8 @@ func TestCompareDirs_DefaultMode_SkipHashOnStructuralDiff(t *testing.T) {
 	if len(diff.Differ) != 0 {
 		t.Errorf("expected no Differ (hash skipped), got %v", diff.Differ)
 	}
-	if diff.Partial {
-		t.Error("expected Partial=false when hash was skipped entirely")
+	if !diff.Partial {
+		t.Error("expected Partial=true (first diff, structural)")
 	}
 }
 

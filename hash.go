@@ -162,13 +162,13 @@ func compareDirsDefault(files1, files2 map[string]fileEntry) (*Diff, error) {
 	// 结构检查：首个仅在 dir1 中的文件。
 	for rel := range files1 {
 		if _, ok := files2[rel]; !ok {
-			return &Diff{Same: false, OnlyIn1: []string{rel}}, nil
+			return &Diff{Same: false, Partial: true, OnlyIn1: []string{rel}}, nil
 		}
 	}
 	// 结构检查：首个仅在 dir2 中的文件。
 	for rel := range files2 {
 		if _, ok := files1[rel]; !ok {
-			return &Diff{Same: false, OnlyIn2: []string{rel}}, nil
+			return &Diff{Same: false, Partial: true, OnlyIn2: []string{rel}}, nil
 		}
 	}
 
