@@ -2,10 +2,9 @@
 // 以及文件/目录的内容比较。
 //
 // 文件比较：先比较大小，相同则用 xxHash 比对内容。
-// 目录比较：递归遍历两个目录，收集所有普通文件的相对路径及大小，
-// 先找出仅存在于一侧的文件（始终全量收集），再对共同文件使用 worker pool
-// 并发比对。默认模式下发现第一处文件内容差异即停止；--diff-all 模式下
-// 全量收集所有差异。
+// 目录比较：
+//   - 默认模式（串行）：结构检查 → 大小比对 → 哈希比对，第一处差异即返回。
+//   - --diff-all 模式（并发）：worker pool 全量收集所有差异。
 //
 // worker 数量等于逻辑 CPU 核数。文件读取使用 1 MiB 缓冲区（sync.Pool 复用），
 // 减少系统调用开销。符号链接不会被纳入比较。
@@ -36,7 +35,7 @@ type fileEntry struct {
 	size int64
 }
 
-// pair 表示一对需要比对内容的共同文件。
+// pair 表示一对需要比对内容的共同文件（仅并发模式使用）。
 type pair struct {
 	rel          string
 	a, b         string
@@ -136,14 +135,12 @@ func CompareFiles(path1, path2 string) (*Diff, error) {
 	return &Diff{Same: false, Differ: []string{path1, path2}}, nil
 }
 
-// CompareDirs 比较两个目录的内容是否相同，包括文件树结构和所有文件的内容。
+// CompareDirs 比较两个目录的内容是否相同。
 //
-// diffAll 为 false（默认模式）：结构差异全量收集，但内容比较在发现第一处差异后
-// 即停止，Diff.Partial 设为 true。
+// diffAll 为 false（默认模式）：完全串行——结构检查 → 大小比对 → 哈希比对，
+// 发现第一处差异即返回，Diff.Partial 设为 true（哈希阶段发现差异时）。
 //
-// diffAll 为 true：全量收集所有差异，Diff.Partial 始终为 false。
-//
-// 所有路径字段均为升序排列，确保输出稳定。
+// diffAll 为 true：并发 worker pool 全量收集所有差异。
 func CompareDirs(dir1, dir2 string, diffAll bool) (*Diff, error) {
 	files1, err := walkFiles(dir1)
 	if err != nil {
@@ -154,9 +151,66 @@ func CompareDirs(dir1, dir2 string, diffAll bool) (*Diff, error) {
 		return nil, err
 	}
 
+	if diffAll {
+		return compareDirsAll(files1, files2)
+	}
+	return compareDirsDefault(files1, files2)
+}
+
+// compareDirsDefault 串行比较，发现第一处差异即返回。
+func compareDirsDefault(files1, files2 map[string]fileEntry) (*Diff, error) {
+	// 结构检查：首个仅在 dir1 中的文件。
+	for rel := range files1 {
+		if _, ok := files2[rel]; !ok {
+			return &Diff{Same: false, OnlyIn1: []string{rel}}, nil
+		}
+	}
+	// 结构检查：首个仅在 dir2 中的文件。
+	for rel := range files2 {
+		if _, ok := files1[rel]; !ok {
+			return &Diff{Same: false, OnlyIn2: []string{rel}}, nil
+		}
+	}
+
+	// 共同文件按相对路径排序，串行比对大小和哈希。
+	common := make([]string, 0, len(files1))
+	for rel := range files1 {
+		if _, ok := files2[rel]; ok {
+			common = append(common, rel)
+		}
+	}
+	sort.Strings(common)
+
+	for _, rel := range common {
+		e1, e2 := files1[rel], files2[rel]
+
+		// 大小不同则内容必定不同。
+		if e1.size != e2.size {
+			return &Diff{Same: false, Partial: true, Differ: []string{rel}}, nil
+		}
+
+		// 大小相同，计算哈希确认。
+		h1, err := fileHash(e1.path)
+		if err != nil {
+			return nil, err
+		}
+		h2, err := fileHash(e2.path)
+		if err != nil {
+			return nil, err
+		}
+		if h1 != h2 {
+			return &Diff{Same: false, Partial: true, Differ: []string{rel}}, nil
+		}
+	}
+
+	return &Diff{Same: true}, nil
+}
+
+// compareDirsAll 使用 worker pool 并发比对，全量收集所有差异。
+func compareDirsAll(files1, files2 map[string]fileEntry) (*Diff, error) {
 	diff := &Diff{Same: true}
 
-	// 结构差异始终全量收集（仅 map 遍历，无 I/O）。
+	// 结构差异全量收集。
 	for rel := range files1 {
 		if _, ok := files2[rel]; !ok {
 			diff.OnlyIn1 = append(diff.OnlyIn1, rel)
@@ -184,32 +238,14 @@ func CompareDirs(dir1, dir2 string, diffAll bool) (*Diff, error) {
 		return diff, nil
 	}
 
-	// 默认模式下，若已发现结构差异则无需哈希共同文件。
-	if !diffAll && !diff.Same {
-		return diff, nil
-	}
-
 	n := runtime.NumCPU()
 	if n > len(pairs) {
 		n = len(pairs)
 	}
 
-	// 默认模式：quit channel 用于 worker 提前退出。
-	var quit chan struct{}
-	var quitOnce sync.Once
-	cancel := func() {}
-	if !diffAll {
-		quit = make(chan struct{})
-		cancel = func() { quitOnce.Do(func() { close(quit) }) }
-	}
-	defer cancel()
-
 	work := make(chan pair, n)
-	dn := n
-	if diffAll {
-		dn = len(pairs)
-	}
-	doneCh := make(chan taskResult, dn)
+	// diffAll 模式 buffer 设为文件对总数，确保 non-blocking send 不丢结果。
+	doneCh := make(chan taskResult, len(pairs))
 	doneSend := (chan<- taskResult)(doneCh)
 
 	var wg sync.WaitGroup
@@ -217,51 +253,55 @@ func CompareDirs(dir1, dir2 string, diffAll bool) (*Diff, error) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			for {
-				if quit != nil {
+			for p := range work {
+				if p.sizeA != p.sizeB {
 					select {
-					case <-quit:
-						return
-					case p, ok := <-work:
-						if !ok {
-							return
-						}
-						processPair(p, doneSend, cancel)
+					case doneSend <- taskResult{rel: p.rel, diff: true}:
+					default:
 					}
-				} else {
-					p, ok := <-work
-					if !ok {
-						return
+					continue
+				}
+				h1, err := fileHash(p.a)
+				if err != nil {
+					select {
+					case doneSend <- taskResult{rel: p.rel, err: err}:
+					default:
 					}
-					processPair(p, doneSend, nil)
+					continue
+				}
+				h2, err := fileHash(p.b)
+				if err != nil {
+					select {
+					case doneSend <- taskResult{rel: p.rel, err: err}:
+					default:
+					}
+					continue
+				}
+				if h1 != h2 {
+					select {
+					case doneSend <- taskResult{rel: p.rel, diff: true}:
+					default:
+					}
 				}
 			}
 		}()
 	}
 
-	// 在独立 goroutine 中发放任务，以便响应 quit 信号。
+	// 发放所有任务。
 	go func() {
 		defer close(work)
 		for _, p := range pairs {
-			if quit != nil {
-				select {
-				case <-quit:
-					return
-				case work <- p:
-				}
-			} else {
-				work <- p
-			}
+			work <- p
 		}
 	}()
 
-	// 等待所有 worker 完成后关闭结果通道。
+	// 等待 worker 完成后关闭结果通道。
 	go func() {
 		wg.Wait()
 		close(doneCh)
 	}()
 
-	// 收集结果。
+	// 收集全部结果。
 	for r := range doneCh {
 		if r.err != nil {
 			return nil, r.err
@@ -269,61 +309,9 @@ func CompareDirs(dir1, dir2 string, diffAll bool) (*Diff, error) {
 		if r.diff {
 			diff.Differ = append(diff.Differ, r.rel)
 			diff.Same = false
-			if !diffAll {
-				diff.Partial = true
-				cancel() // 通知 worker 和 feeder 停止
-				break    // 默认模式不再等待更多结果
-			}
 		}
 	}
 	sort.Strings(diff.Differ)
 
 	return diff, nil
-}
-
-// processPair 处理单个文件对：先比较大小，大小不同直接记差异；
-// 大小相同则计算 xxHash 比对。
-func processPair(p pair, done chan<- taskResult, cancel func()) {
-	if p.sizeA != p.sizeB {
-		select {
-		case done <- taskResult{rel: p.rel, diff: true}:
-		default:
-		}
-		if cancel != nil {
-			cancel()
-		}
-		return
-	}
-
-	h1, err := fileHash(p.a)
-	if err != nil {
-		select {
-		case done <- taskResult{rel: p.rel, err: err}:
-		default:
-		}
-		if cancel != nil {
-			cancel()
-		}
-		return
-	}
-	h2, err := fileHash(p.b)
-	if err != nil {
-		select {
-		case done <- taskResult{rel: p.rel, err: err}:
-		default:
-		}
-		if cancel != nil {
-			cancel()
-		}
-		return
-	}
-	if h1 != h2 {
-		select {
-		case done <- taskResult{rel: p.rel, diff: true}:
-		default:
-		}
-		if cancel != nil {
-			cancel()
-		}
-	}
 }

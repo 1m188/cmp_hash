@@ -233,8 +233,8 @@ func TestCompareDirs_MixedDiffs(t *testing.T) {
 	}
 }
 
-// TestCompareDirs_DefaultMode_FirstDiff 验证默认模式（diffAll=false）
-// 在发现第一处内容差异后即停止，Partial 标志为 true。
+// TestCompareDirs_DefaultMode_FirstDiff 验证默认模式串行比对，
+// 按文件名排序后发现第一处内容差异即停止，Partial 为 true。
 func TestCompareDirs_DefaultMode_FirstDiff(t *testing.T) {
 	dir := t.TempDir()
 	d1 := filepath.Join(dir, "d1")
@@ -242,7 +242,6 @@ func TestCompareDirs_DefaultMode_FirstDiff(t *testing.T) {
 	os.MkdirAll(d1, 0755)
 	os.MkdirAll(d2, 0755)
 
-	// 创建多个内容不同的文件。
 	os.WriteFile(filepath.Join(d1, "a.txt"), []byte("hello"), 0644)
 	os.WriteFile(filepath.Join(d2, "a.txt"), []byte("different_a"), 0644)
 	os.WriteFile(filepath.Join(d1, "b.txt"), []byte("world"), 0644)
@@ -258,10 +257,40 @@ func TestCompareDirs_DefaultMode_FirstDiff(t *testing.T) {
 	if !diff.Partial {
 		t.Error("expected Partial=true in default mode on content diff")
 	}
-	// 默认模式可能在发现第一处差异后即停止，
-	// Differ 至少包含 1 个但可能不包含全部 2 个。
-	if len(diff.Differ) < 1 {
-		t.Error("expected at least 1 Differ entry")
+	// 串行默认模式按文件名排序比对，a.txt 先于 b.txt，恰好 1 个 Differ。
+	if len(diff.Differ) != 1 || diff.Differ[0] != "a.txt" {
+		t.Errorf("expected Differ=[a.txt], got %v", diff.Differ)
+	}
+}
+
+// TestCompareDirs_DefaultMode_SizeDiffFirst 验证默认模式下大小差异先于哈希被检测：
+// 大小不同的文件不计算哈希，直接报告差异。
+func TestCompareDirs_DefaultMode_SizeDiffFirst(t *testing.T) {
+	dir := t.TempDir()
+	d1 := filepath.Join(dir, "d1")
+	d2 := filepath.Join(dir, "d2")
+	os.MkdirAll(d1, 0755)
+	os.MkdirAll(d2, 0755)
+
+	// 相同文件排在前（按文件名排序），确保不会提前退出。
+	os.WriteFile(filepath.Join(d1, "aaa.txt"), []byte("hello"), 0644)
+	os.WriteFile(filepath.Join(d2, "aaa.txt"), []byte("hello"), 0644)
+	// 大小不同的文件排在后，验证大小差异被检测且跳过了哈希。
+	os.WriteFile(filepath.Join(d1, "bbb.txt"), []byte("short"), 0644)
+	os.WriteFile(filepath.Join(d2, "bbb.txt"), []byte("much longer content here"), 0644)
+
+	diff, err := CompareDirs(d1, d2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff.Same {
+		t.Error("expected different due to size mismatch")
+	}
+	if len(diff.Differ) != 1 || diff.Differ[0] != "bbb.txt" {
+		t.Errorf("expected Differ=[bbb.txt], got %v", diff.Differ)
+	}
+	if !diff.Partial {
+		t.Error("expected Partial=true")
 	}
 }
 
