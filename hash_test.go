@@ -46,7 +46,9 @@ func TestCompareFiles_Different(t *testing.T) {
 }
 
 func TestCompareFiles_NotExist(t *testing.T) {
-	_, err := CompareFiles("/nonexistent/path", "/another/bad/path")
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "nonexistent.txt")
+	_, err := CompareFiles(bad, bad)
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}
@@ -113,8 +115,9 @@ func TestCompareDirs_DifferentStructure(t *testing.T) {
 	if diff.Same {
 		t.Error("expected different structure")
 	}
-	if len(diff.OnlyIn1) != 1 || diff.OnlyIn1[0] != "sub/b.txt" {
-		t.Errorf("expected OnlyIn1=[sub/b.txt], got %v", diff.OnlyIn1)
+	expectedOnly1 := filepath.Join("sub", "b.txt")
+	if len(diff.OnlyIn1) != 1 || diff.OnlyIn1[0] != expectedOnly1 {
+		t.Errorf("expected OnlyIn1=[%s], got %v", expectedOnly1, diff.OnlyIn1)
 	}
 	if len(diff.OnlyIn2) != 1 || diff.OnlyIn2[0] != "a.txt" {
 		t.Errorf("expected OnlyIn2=[a.txt], got %v", diff.OnlyIn2)
