@@ -341,3 +341,69 @@ func TestCompareDirs_DifferentSize_NoHash(t *testing.T) {
 		t.Error("expected Partial=true")
 	}
 }
+
+// TestCompareDirs_DefaultMode_SkipHashOnStructuralDiff 验证默认模式下
+// 若已发现结构差异（OnlyIn1/OnlyIn2 非空），则跳过哈希阶段直接返回，
+// Differ 为空且 Partial 为 false（内容比较未启动，故非"截断"）。
+func TestCompareDirs_DefaultMode_SkipHashOnStructuralDiff(t *testing.T) {
+	dir := t.TempDir()
+	d1 := filepath.Join(dir, "d1")
+	d2 := filepath.Join(dir, "d2")
+	os.MkdirAll(d1, 0755)
+	os.MkdirAll(d2, 0755)
+
+	// 结构差异：extra.txt 仅在 d1
+	os.WriteFile(filepath.Join(d1, "extra.txt"), []byte("x"), 0644)
+	// 内容差异的共同文件（不应被检测到，因为结构差异先触发退出）
+	os.WriteFile(filepath.Join(d1, "common.txt"), []byte("hello"), 0644)
+	os.WriteFile(filepath.Join(d2, "common.txt"), []byte("world"), 0644)
+
+	diff, err := CompareDirs(d1, d2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff.Same {
+		t.Error("expected different due to structural diff")
+	}
+	if len(diff.OnlyIn1) != 1 || diff.OnlyIn1[0] != "extra.txt" {
+		t.Errorf("expected OnlyIn1=[extra.txt], got %v", diff.OnlyIn1)
+	}
+	// 关键断言：哈希阶段被跳过，Differ 为空。
+	if len(diff.Differ) != 0 {
+		t.Errorf("expected no Differ (hash skipped), got %v", diff.Differ)
+	}
+	if diff.Partial {
+		t.Error("expected Partial=false when hash was skipped entirely")
+	}
+}
+
+// TestCompareDirs_DiffAll_AllContentDiffs 验证 diffAll 模式收集全部内容差异。
+func TestCompareDirs_DiffAll_AllContentDiffs(t *testing.T) {
+	dir := t.TempDir()
+	d1 := filepath.Join(dir, "d1")
+	d2 := filepath.Join(dir, "d2")
+	os.MkdirAll(d1, 0755)
+	os.MkdirAll(d2, 0755)
+
+	// 创建多个内容不同的文件（无结构差异）。
+	const n = 10
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("file_%d.txt", i)
+		os.WriteFile(filepath.Join(d1, name), []byte("content_a"), 0644)
+		os.WriteFile(filepath.Join(d2, name), []byte("content_b"), 0644)
+	}
+
+	diff, err := CompareDirs(d1, d2, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff.Same {
+		t.Fatal("expected different")
+	}
+	if diff.Partial {
+		t.Error("expected Partial=false in --diff-all mode")
+	}
+	if len(diff.Differ) != n {
+		t.Errorf("expected %d Differ entries, got %d: %v", n, len(diff.Differ), diff.Differ)
+	}
+}

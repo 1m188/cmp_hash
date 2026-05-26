@@ -184,6 +184,11 @@ func CompareDirs(dir1, dir2 string, diffAll bool) (*Diff, error) {
 		return diff, nil
 	}
 
+	// 默认模式下，若已发现结构差异则无需哈希共同文件。
+	if !diffAll && !diff.Same {
+		return diff, nil
+	}
+
 	n := runtime.NumCPU()
 	if n > len(pairs) {
 		n = len(pairs)
@@ -200,7 +205,11 @@ func CompareDirs(dir1, dir2 string, diffAll bool) (*Diff, error) {
 	defer cancel()
 
 	work := make(chan pair, n)
-	doneCh := make(chan taskResult, n)
+	dn := n
+	if diffAll {
+		dn = len(pairs)
+	}
+	doneCh := make(chan taskResult, dn)
 	doneSend := (chan<- taskResult)(doneCh)
 
 	var wg sync.WaitGroup
@@ -263,6 +272,7 @@ func CompareDirs(dir1, dir2 string, diffAll bool) (*Diff, error) {
 			if !diffAll {
 				diff.Partial = true
 				cancel() // 通知 worker 和 feeder 停止
+				break    // 默认模式不再等待更多结果
 			}
 		}
 	}
