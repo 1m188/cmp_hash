@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>cmp_hash · 文件/目录哈希对比</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <h1>cmp_hash <span class="badge">web</span></h1>
+      <p class="tagline">浏览器端文件/目录哈希对比 · xxHash64 · 文件不会离开你的设备</p>
+    </header>
+
+    <main>
+      <section class="slots">
+        <div class="slot" id="slot-a">
+          <h2>A</h2>
+          <div class="slot-actions">
+            <button id="pick-file-a">选择文件</button>
+            <button id="pick-dir-a">选择目录</button>
+          </div>
+          <input type="file" id="input-file-a" hidden />
+          <input type="file" id="input-dir-a" webkitdirectory hidden />
+          <div class="slot-info" id="info-a">未选择</div>
+        </div>
+
+        <div class="vs" aria-hidden="true">VS</div>
+
+        <div class="slot" id="slot-b">
+          <h2>B</h2>
+          <div class="slot-actions">
+            <button id="pick-file-b">选择文件</button>
+            <button id="pick-dir-b">选择目录</button>
+          </div>
+          <input type="file" id="input-file-b" hidden />
+          <input type="file" id="input-dir-b" webkitdirectory hidden />
+          <div class="slot-info" id="info-b">未选择</div>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button id="compare-btn" class="primary" disabled>开始比较</button>
+        <button id="reset-btn" class="secondary">重置</button>
+      </div>
+
+      <p class="error" id="error-msg" hidden></p>
+
+      <div class="progress" id="progress" hidden>
+        <div class="bar"><div class="fill" id="progress-fill"></div></div>
+        <span class="progress-text" id="progress-text"></span>
+      </div>
+
+      <section class="result" id="result" hidden>
+        <div class="verdict" id="verdict"></div>
+        <p class="verdict-sub" id="verdict-sub"></p>
+        <p class="summary" id="summary"></p>
+
+        <div class="digests" id="digest-row" hidden>
+          <div><span class="digest-label">A 的 XXH64</span><code id="digest-a"></code></div>
+          <div><span class="digest-label">B 的 XXH64</span><code id="digest-b"></code></div>
+        </div>
+
+        <div class="diff-section" id="sec-only-in-1" hidden>
+          <h3>仅存在于 A <span class="list-count" id="count-only-in-1"></span></h3>
+          <ul id="list-only-in-1"></ul>
+        </div>
+        <div class="diff-section" id="sec-only-in-2" hidden>
+          <h3>仅存在于 B <span class="list-count" id="count-only-in-2"></span></h3>
+          <ul id="list-only-in-2"></ul>
+        </div>
+        <div class="diff-section" id="sec-differ" hidden>
+          <h3>内容不同 <span class="list-count" id="count-differ"></span></h3>
+          <ul id="list-differ"></ul>
+        </div>
+        <div class="diff-section errors" id="sec-errors" hidden>
+          <h3>读取失败 <span class="list-count" id="count-errors"></span></h3>
+          <ul id="list-errors"></ul>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      与 CLI 版使用相同的 xxHash64（XXH64）算法，比较语义对齐
+      <code>cmp_hash --diff-all</code>。所有计算均在浏览器本地完成，不上传任何数据。
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

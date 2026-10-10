@@ -1,0 +1,22 @@
+{
+  "name": "cmp-hash-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "cmp_hash web 版：浏览器端文件/目录哈希对比（xxHash64）",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "hash-wasm": "^4.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0",
+    "vitest": "^3.2.0"
+  }
+}
